@@ -16,81 +16,51 @@
 % 1) Kraje (decyzje)
 % =========================
 % Dodaj wszystkie rozważane kraje.
-kraj(albania).
-kraj(andora).
 kraj(argentyna).
 kraj(australia).
 kraj(austria).
 kraj(bangladesz).
-kraj(belgia).
-kraj(bhutan).
 kraj(boliwia).
 kraj(botswana).
 kraj(brazylia).
-kraj(bulgaria).
 kraj(kambodza).
 kraj(kanada).
 kraj(chile).
 kraj(kolumbia).
-kraj(chorwacja).
-kraj(czechy).
-kraj(dania).
 kraj(dominikana).
-kraj(ekwador).
 kraj(estonia).
-kraj(eswatini).
 kraj(finlandia).
 kraj(francja).
 kraj(niemcy).
 kraj(ghana).
-kraj(grecja).
-kraj(grenlandia).
 kraj(gwatemala).
-kraj(wegry).
 kraj(islandia).
 kraj(indie).
 kraj(indonezja).
-kraj(irlandia).
 kraj(izrael).
 kraj(wlochy).
 kraj(japonia).
-kraj(jordania).
 kraj(kenia).
 kraj(kirgistan).
-kraj(lotwa).
-kraj(liban).
 kraj(lesotho).
-kraj(liechtenstein).
-kraj(litwa).
-kraj(luksemburg).
 kraj(malezja).
 kraj(meksyk).
 kraj(mongolia).
-kraj(czarnogora).
 kraj(namibia).
-kraj(niderlandy).
 kraj(nowa_zelandia).
 kraj(nigeria).
-kraj(macedonia_polnocna).
 kraj(norwegia).
 kraj(oman).
-kraj(palestyna).
 kraj(panama).
 kraj(peru).
 kraj(filipiny).
 kraj(polska).
-kraj(portugalia).
 kraj(katar).
 kraj(rumunia).
 kraj(rosja).
 kraj(rwanda).
-kraj(san_marino).
-kraj(wyspy_swietego_tomasza_i_ksiazeca).
 kraj(senegal).
-kraj(serbia).
 kraj(singapur).
-kraj(slowacja).
-kraj(slowenia).
 kraj(poludniowa_afryka).
 kraj(korea_poludniowa).
 kraj(hiszpania).
@@ -102,13 +72,11 @@ kraj(tajlandia).
 kraj(turcja).
 kraj(tunezja).
 kraj(ukraina).
-kraj(uganda).
 kraj(zjednoczone_emiraty_arabskie).
 kraj(wielka_brytania).
 kraj(usa).
 kraj(urugwaj).
-kraj(wietnam).
-% kraj(...).
+
 
 % Mapa atomu technicznego na etykietę do UI.
 kraj_ui_label(albania, 'Albania').
