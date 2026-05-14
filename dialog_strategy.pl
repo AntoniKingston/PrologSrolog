@@ -1,9 +1,13 @@
 :- module(dialog_strategy, [
     next_question/3,
-    unanswered_questions/2
+    unanswered_questions/2,
+    candidate_countries/2,
+    next_contextual_question/2
 ]).
 
+:- use_module(library(lists)).
 :- use_module('knowledge_base_template.pl').
+:- use_module(inference_engine, [infer_scores/2]).
 
 % unanswered_questions(+KnownAnswers, -QuestionIds)
 % KnownAnswers is a list of Id-Value pairs.
@@ -57,3 +61,49 @@ premise_mentions_feature(Premises, Feature) :-
 premise_feature(cecha(Feature, _), Feature).
 premise_feature(cecha_enum(Feature, _), Feature).
 premise_feature(cecha_num(Feature, _Min, _Max), Feature).
+
+% candidate_countries(+KnownAnswers, -Countries)
+% Countries that still compete for the next question, derived from current
+% scores (top cluster around the best score, or all countries if flat).
+candidate_countries(Answers, Candidates) :-
+    infer_scores(Answers, Scores),
+    sort_scores_desc(Scores, Sorted),
+    ( Sorted = [] ->
+        findall(C, kraj(C), Candidates)
+    ; trim_candidates_from_sorted(Sorted, Candidates)
+    ).
+
+sort_scores_desc(Pairs, Desc) :-
+    maplist(score_country_flip, Pairs, Flipped),
+    keysort(Flipped, AscByScore),
+    reverse(AscByScore, DescByScore),
+    maplist(score_country_flip, DescByScore, Desc).
+
+score_country_flip(Country-Score, Score-Country).
+
+trim_candidates_from_sorted(Sorted, Candidates) :-
+    Sorted = [_-MaxScore | _],
+    ( MaxScore =< 0.00001 ->
+        findall(C, kraj(C), Candidates)
+    ; Margin is max(0.0, MaxScore - 0.15),
+      findall(C, (member(C-S, Sorted), S >= Margin), CsMargin),
+      length(CsMargin, N),
+      ( N >= 3 ->
+          Candidates = CsMargin
+      ; take_first_k_countries(Sorted, 12, Candidates)
+      )
+    ).
+
+take_first_k_countries([], _, []).
+take_first_k_countries(_, 0, []) :- !.
+take_first_k_countries([C-_S | Rest], K, [C | Out]) :-
+    K > 0,
+    K1 is K - 1,
+    take_first_k_countries(Rest, K1, Out).
+
+% next_contextual_question(+KnownAnswers, -QuestionId)
+% Chooses the best unanswered question using current candidate countries.
+next_contextual_question(KnownAnswers, QuestionId) :-
+    candidate_countries(KnownAnswers, Candidates),
+    Candidates \= [],
+    next_question(KnownAnswers, Candidates, QuestionId).
