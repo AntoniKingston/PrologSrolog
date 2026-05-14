@@ -63,9 +63,14 @@ premises_satisfied([Premise | Rest], Answers) :-
     premise_holds(Premise, Answers),
     premises_satisfied(Rest, Answers).
 
+% Baza używa yes/no w regułach CF; komentarz w KB wspomina tak/nie — obsługujemy oba.
 premise_holds(cecha(Feature, tak), Answers) :-
     answer_for_feature(Feature, Answers, yes).
 premise_holds(cecha(Feature, nie), Answers) :-
+    answer_for_feature(Feature, Answers, no).
+premise_holds(cecha(Feature, yes), Answers) :-
+    answer_for_feature(Feature, Answers, yes).
+premise_holds(cecha(Feature, no), Answers) :-
     answer_for_feature(Feature, Answers, no).
 premise_holds(cecha_enum(Feature, Value), Answers) :-
     answer_for_feature(Feature, Answers, Value).
@@ -122,6 +127,10 @@ rule_blocked_by_veto(Country, Answers, RuleId) :-
 premise_conflict_strength(cecha(Feature, tak), Answers, Strength) :-
     (answer_for_feature(Feature, Answers, no) -> Strength = 1.0 ; Strength = 0.0).
 premise_conflict_strength(cecha(Feature, nie), Answers, Strength) :-
+    (answer_for_feature(Feature, Answers, yes) -> Strength = 1.0 ; Strength = 0.0).
+premise_conflict_strength(cecha(Feature, yes), Answers, Strength) :-
+    (answer_for_feature(Feature, Answers, no) -> Strength = 1.0 ; Strength = 0.0).
+premise_conflict_strength(cecha(Feature, no), Answers, Strength) :-
     (answer_for_feature(Feature, Answers, yes) -> Strength = 1.0 ; Strength = 0.0).
 premise_conflict_strength(cecha_enum(Feature, Expected), Answers, Strength) :-
     ( answer_for_feature(Feature, Answers, Actual),

@@ -7,6 +7,7 @@
     pytanie/4,
     cecha_typ/2,
     enum_wartosci/2,
+    enum_wartosc/2,
     regula_cf/5,
     regula_fuzzy/5,
     weto/3
@@ -338,6 +339,11 @@ enum_wartosci(typ_dachow, [dwuspadowy, plaski, blaszany, dachowka_ceramiczna, mi
 enum_wartosci(kolorystyka_budynkow, [jasna, ceglana, pastelowa, szara, kontrastowa]).
 enum_wartosci(generacja_kamery_google, [gen2, gen3, gen4, nieznana]).
 
+% Pojedyncze wartości enum (do UI / zapytań iteracyjnych)
+enum_wartosc(Cecha, W) :-
+    enum_wartosci(Cecha, Lista),
+    member(W, Lista).
+
 % =========================
 % 4) Reguły przybliżone (CF)
 % =========================
@@ -486,6 +492,31 @@ regula_cf(r_cf_039, zjednoczone_emiraty_arabskie,
 regula_cf(r_cf_040, zjednoczone_emiraty_arabskie,
     [cecha_enum(generacja_kamery_google, gen4), cecha_enum(kolorystyka_budynkow, jasna)],
     0.42, 5).
+
+% --- Rosja / Ukraina (sygnały postsowieckie + język rosyjski na znakach) ---
+regula_cf(r_cf_041, rosja,
+    [cecha_enum(jezyk_na_znakach, rosyjski), cecha_enum(styl_architektury, postsowiecki)],
+    0.90, 10).
+regula_cf(r_cf_042, rosja,
+    [cecha_enum(jezyk_na_znakach, rosyjski), cecha_enum(typ_biomu, srodziemnomorski)],
+    0.72, 8).
+regula_cf(r_cf_043, rosja,
+    [cecha_enum(jezyk_na_znakach, rosyjski), cecha_enum(generacja_kamery_google, gen3)],
+    0.55, 7).
+regula_cf(r_cf_044, rosja,
+    [cecha_enum(jezyk_na_znakach, rosyjski), cecha(ruch_lewostronny, no)],
+    0.65, 8).
+
+regula_cf(r_cf_045, ukraina,
+    [cecha_enum(jezyk_na_znakach, rosyjski), cecha_enum(styl_architektury, postsowiecki)],
+    0.78, 9).
+regula_cf(r_cf_046, ukraina,
+    [cecha_enum(typ_biomu, srodziemnomorski), cecha_enum(jezyk_na_znakach, rosyjski)],
+    0.60, 7).
+
+regula_cf(r_cf_047, polska,
+    [cecha_enum(styl_architektury, postsowiecki), cecha(ruch_lewostronny, no)],
+    0.28, 4).
 
 % =========================
 % 5) Reguły rozmyte
