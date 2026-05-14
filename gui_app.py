@@ -1,7 +1,7 @@
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -45,6 +45,7 @@ class ExpertSystemGUI(QMainWindow):
 
         self.answers: Dict[str, AnswerValue] = {}
         self.questions: List[Question] = []
+        self.questions_by_id: Dict[str, Question] = {}
         self.current_question: Question | None = None
         self.init_failed: bool = False
         self.base_dir = Path(__file__).resolve().parent
@@ -94,10 +95,11 @@ class ExpertSystemGUI(QMainWindow):
             return
         try:
             self.prolog = Prolog()
+            # inference_engine must load before dialog_strategy (uses infer_scores/2).
             for fname in [
                 "knowledge_base_template.pl",
-                "dialog_strategy.pl",
                 "inference_engine.pl",
+                "dialog_strategy.pl",
                 "minimal_rules.pl",
             ]:
                 full_path = (self.base_dir / fname).as_posix()
@@ -122,13 +124,36 @@ class ExpertSystemGUI(QMainWindow):
             )
             for row in rows
         ]
+        self.questions_by_id = {q.qid: q for q in self.questions}
         if not self.questions:
             self._fatal(
                 "Inicjalizacja zakończona, ale nie znaleziono pytań (pytanie/4). "
                 "Sprawdź plik knowledge_base_template.pl."
             )
             return
-        self.status_label.setText(f"Załadowano pytań: {len(self.questions)}")
+        self.status_label.setText(
+            f"Dialog kontekstowy | pytań w bazie: {len(self.questions)} | udzielono: 0"
+        )
+
+    def _update_status_line(self) -> None:
+        n = len(self.answers)
+        total = len(self.questions)
+        self.status_label.setText(
+            f"Dialog kontekstowy | pytań w bazie: {total} | udzielono: {n}"
+        )
+
+    def _next_contextual_qid(self) -> Optional[str]:
+        if not self.prolog:
+            return None
+        prolog_answers = self._answers_to_prolog_list()
+        query = f"next_contextual_question({prolog_answers}, Qid)"
+        try:
+            rows = list(self.prolog.query(query))
+        except Exception:
+            return None
+        if not rows:
+            return None
+        return str(rows[0]["Qid"])
 
     def _render_next_question(self) -> None:
         if not self.questions:
@@ -136,21 +161,44 @@ class ExpertSystemGUI(QMainWindow):
             self.next_button.setEnabled(False)
             return
 
-        unanswered = [q for q in self.questions if q.qid not in self.answers]
-        if not unanswered:
-            self.question_label.setText("Wszystkie pytania wypełnione. Możesz pokazać wynik.")
+        if len(self.answers) >= len(self.questions):
+            self.question_label.setText(
+                "Wszystkie pytania wypełnione. Możesz pokazać wynik."
+            )
             self._clear_answer_widgets()
+            self.current_question = None
             self.next_button.setEnabled(False)
+            self._update_status_line()
             return
 
-        self.current_question = unanswered[0]
-        q = self.current_question
+        next_qid = self._next_contextual_qid()
+        if next_qid is None:
+            self.question_label.setText(
+                "Brak kolejnego pytania (wszystkie cechy już ocenione lub błąd strategii). "
+                "Możesz pokazać wynik na podstawie dotychczasowych odpowiedzi."
+            )
+            self._clear_answer_widgets()
+            self.current_question = None
+            self.next_button.setEnabled(False)
+            self._update_status_line()
+            return
+
+        q = self.questions_by_id.get(next_qid)
+        if q is None:
+            self._fatal(
+                f"Strategia dialogu zwróciła nieznane pytanie: {next_qid!r}. "
+                "Sprawdź spójność identyfikatorów z pytanie/4."
+            )
+            return
+
+        self.current_question = q
         self.question_label.setText(
             f"Pytanie ({q.context}): Jak oceniasz cechę `{q.feature}`?"
         )
         self._clear_answer_widgets()
         self._build_answer_widgets(q)
         self.next_button.setEnabled(True)
+        self._update_status_line()
 
     def _clear_answer_widgets(self) -> None:
         while self.answer_layout.count():
@@ -209,6 +257,7 @@ class ExpertSystemGUI(QMainWindow):
             QMessageBox.warning(self, "Brak odpowiedzi", "Wybierz odpowiedź przed przejściem dalej.")
             return
         self.answers[self.current_question.qid] = answer
+        self._update_status_line()
         self._render_next_question()
 
     def on_finish_clicked(self) -> None:
