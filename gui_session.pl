@@ -5,11 +5,12 @@
     gui_add/2,
     gui_answer_count/1,
     gui_next_q/1,
-    gui_best_country/2
+    gui_best_country/2,
+    gui_infer_scores/2
 ]).
 
 :- use_module(dialog_strategy, [next_contextual_question/2]).
-:- use_module(inference_engine, [best_country/2]).
+:- use_module(inference_engine, [best_country/2, infer_scores/2]).
 
 :- dynamic gui_answer/2.
 
@@ -33,3 +34,8 @@ gui_next_q(Qid) :-
 gui_best_country(Country, Score) :-
     gui_answer_list(Answers),
     best_country(Answers, Country-Score).
+
+gui_infer_scores(Country, Score) :-
+    gui_answer_list(Answers),
+    infer_scores(Answers, Scores),
+    member(Country-Score, Scores).

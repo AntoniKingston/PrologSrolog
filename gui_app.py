@@ -3,7 +3,7 @@ import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PyQt5.QtCore import QVariant
 from PyQt5.QtWidgets import (
@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSlider,
+    QListWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -104,7 +105,8 @@ class ExpertSystemGUI(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ProGeoLog - Prototyp systemu ekspertowego")
-        self.setMinimumWidth(700)
+        self.setMinimumWidth(960)
+        self.setMinimumHeight(520)
 
         self.answers: Dict[str, AnswerValue] = {}
         self.questions: List[Question] = []
@@ -127,8 +129,9 @@ class ExpertSystemGUI(QMainWindow):
     def _init_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QHBoxLayout(central)
 
+        dialog_col = QVBoxLayout()
         self.status_label = QLabel("Inicjalizacja...")
         self.question_label = QLabel("")
         self.question_label.setWordWrap(True)
@@ -139,15 +142,23 @@ class ExpertSystemGUI(QMainWindow):
         buttons = QHBoxLayout()
         self.next_button = QPushButton("Zatwierdź i dalej")
         self.next_button.clicked.connect(self.on_next_clicked)
-        self.finish_button = QPushButton("Pokaż wynik")
-        self.finish_button.clicked.connect(self.on_finish_clicked)
         buttons.addWidget(self.next_button)
-        buttons.addWidget(self.finish_button)
 
-        root.addWidget(self.status_label)
-        root.addWidget(self.question_label)
-        root.addWidget(self.answer_container)
-        root.addLayout(buttons)
+        dialog_col.addWidget(self.status_label)
+        dialog_col.addWidget(self.question_label)
+        dialog_col.addWidget(self.answer_container)
+        dialog_col.addLayout(buttons)
+
+        ranking_col = QVBoxLayout()
+        self.ranking_title = QLabel("Top 10 krajów (pewność)")
+        self.ranking_title.setWordWrap(True)
+        self.ranking_list = QListWidget()
+        self.ranking_list.setMinimumWidth(300)
+        ranking_col.addWidget(self.ranking_title)
+        ranking_col.addWidget(self.ranking_list)
+
+        root.addLayout(dialog_col, stretch=3)
+        root.addLayout(ranking_col, stretch=2)
 
         self.radio_group = QButtonGroup(self)
         self.radio_group.setExclusive(True)
@@ -240,6 +251,41 @@ class ExpertSystemGUI(QMainWindow):
         self.status_label.setText(
             f"Dialog kontekstowy | pytań w bazie: {len(self.questions)} | udzielono: 0"
         )
+        self._refresh_ranking()
+
+    def _refresh_ranking(self) -> None:
+        self.ranking_list.clear()
+        if not self.prolog or self.init_failed:
+            self.ranking_list.addItem("Ranking niedostępny (Prolog)")
+            return
+        if not self.answers:
+            self.ranking_list.addItem("Udziel pierwszej odpowiedzi, aby zobaczyć ranking.")
+            return
+        self._sync_prolog_session_from_answers()
+        try:
+            rows = list(self.prolog.query(f"{_SESSION_MOD}:gui_infer_scores(Country, Score)"))
+        except Exception as exc:
+            self.ranking_list.addItem(f"Błąd rankingu: {exc}")
+            return
+        ranked = self._sort_country_scores(rows)[:10]
+        if not ranked:
+            self.ranking_list.addItem("Brak wyników")
+            return
+        if ranked[0][1] < 0.001:
+            self.ranking_list.addItem("Brak wystarczających dowodów — udziel więcej odpowiedzi.")
+            return
+        for rank, (country_atom, score) in enumerate(ranked, start=1):
+            label = self._country_label(country_atom)
+            self.ranking_list.addItem(f"{rank}. {label}  —  {score:.3f}")
+
+    def _sort_country_scores(self, rows: List[Dict[str, Any]]) -> List[Tuple[str, float]]:
+        pairs: List[Tuple[str, float]] = []
+        for row in rows:
+            country = _prolog_text(row["Country"])
+            score = float(str(row["Score"]).replace(",", "."))
+            pairs.append((country, score))
+        pairs.sort(key=lambda item: item[1], reverse=True)
+        return pairs
 
     def _update_status_line(self) -> None:
         n = len(self.answers)
@@ -338,24 +384,26 @@ class ExpertSystemGUI(QMainWindow):
 
         if len(self.answers) >= len(self.questions):
             self.question_label.setText(
-                "Wszystkie pytania wypełnione. Możesz pokazać wynik."
+                "Wszystkie pytania wypełnione. Ranking po prawej pokazuje aktualne hipotezy."
             )
             self._clear_answer_widgets()
             self.current_question = None
             self.next_button.setEnabled(False)
             self._update_status_line()
+            self._refresh_ranking()
             return
 
         next_qid = self._next_contextual_qid()
         if next_qid is None:
             self.question_label.setText(
                 "Brak kolejnego pytania (wszystkie cechy już ocenione lub błąd strategii). "
-                "Możesz pokazać wynik na podstawie dotychczasowych odpowiedzi."
+                "Aktualny ranking jest widoczny po prawej stronie."
             )
             self._clear_answer_widgets()
             self.current_question = None
             self.next_button.setEnabled(False)
             self._update_status_line()
+            self._refresh_ranking()
             return
 
         q = self.questions_by_id.get(next_qid)
@@ -374,6 +422,7 @@ class ExpertSystemGUI(QMainWindow):
         self._build_answer_widgets(q)
         self.next_button.setEnabled(True)
         self._update_status_line()
+        self._refresh_ranking()
 
     def _clear_answer_widgets(self) -> None:
         while self.answer_layout.count():
@@ -465,34 +514,6 @@ class ExpertSystemGUI(QMainWindow):
         self._update_status_line()
         self._render_next_question()
 
-    def on_finish_clicked(self) -> None:
-        if not self.prolog:
-            return
-        self._sync_prolog_session_from_answers()
-        query = f"{_SESSION_MOD}:gui_best_country(Country, Score)"
-        try:
-            result = list(self.prolog.query(query))
-        except Exception as exc:
-            QMessageBox.critical(self, "Błąd Prolog", str(exc))
-            return
-        if not result:
-            QMessageBox.information(self, "Wynik", "Nie udało się wyznaczyć hipotezy.")
-            return
-        country_atom = _prolog_text(result[0]["Country"])
-        score = float(str(result[0]["Score"]).replace(",", "."))
-        label = self._country_label(country_atom)
-        note = ""
-        if score < 0.001:
-            note = (
-                "\n\nUwaga: pewność ~0 oznacza zwykle brak reguł CF pasujących do tej kombinacji "
-                "odpowiedzi (baza jest celowo skąpa). Rozszerz reguły w knowledge_base_template.pl."
-            )
-        QMessageBox.information(
-            self,
-            "Wynik",
-            f"Najlepsza hipoteza: {label} ({country_atom})\nPewność: {score:.3f}{note}",
-        )
-
     def _country_label(self, country_atom: str) -> str:
         if not self.prolog:
             return country_atom
@@ -509,7 +530,8 @@ class ExpertSystemGUI(QMainWindow):
         self.status_label.setText("Błąd inicjalizacji")
         self.question_label.setText(message)
         self.next_button.setEnabled(False)
-        self.finish_button.setEnabled(False)
+        self.ranking_list.clear()
+        self.ranking_list.addItem("Błąd inicjalizacji")
 
 
 def main() -> None:
