@@ -287,6 +287,30 @@ class ExpertSystemGUI(QMainWindow):
         pairs.sort(key=lambda item: item[1], reverse=True)
         return pairs
 
+    def _dialog_context_status(self) -> str:
+        if not self.prolog or self.init_failed:
+            return ""
+        try:
+            rows = list(
+                self.prolog.query(
+                    f"{_SESSION_MOD}:gui_dialog_status(Nh, Np, TopPair)"
+                )
+            )
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+        row = rows[0]
+        nh = int(float(str(row["Nh"]).replace(",", ".")))
+        np = int(float(str(row["Np"]).replace(",", ".")))
+        top = row.get("TopPair")
+        pair_part = ""
+        if top is not None:
+            top_s = _prolog_text(top)
+            if top_s and top_s.lower() != "none":
+                pair_part = f" | para: {top_s.replace('pair(', '').replace(')', '')}"
+        return f" | hipotezy: {nh} | pary: {np}{pair_part}"
+
     def _update_status_line(self) -> None:
         n = len(self.answers)
         total = len(self.questions)
@@ -296,8 +320,9 @@ class ExpertSystemGUI(QMainWindow):
             pl_part = f" | fakty w Prologu: {pl}"
             if n > 0 and pl != n:
                 pl_part += " (!)"
+        ctx = self._dialog_context_status()
         self.status_label.setText(
-            f"Dialog kontekstowy | pytań w bazie: {total} | udzielono: {n}{pl_part}"
+            f"Dialog kontekstowy | pytań w bazie: {total} | udzielono: {n}{pl_part}{ctx}"
         )
 
     def _sync_prolog_session_from_answers(self) -> None:
