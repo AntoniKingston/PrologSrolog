@@ -6,10 +6,15 @@
     gui_answer_count/1,
     gui_next_q/1,
     gui_best_country/2,
-    gui_infer_scores/2
+    gui_infer_scores/2,
+    gui_dialog_status/3
 ]).
 
-:- use_module(dialog_strategy, [next_contextual_question/2]).
+:- use_module(dialog_strategy, [
+    next_contextual_question/2,
+    active_hypotheses/2,
+    unresolved_hypothesis_pairs/2
+]).
 :- use_module(inference_engine, [best_country/2, infer_scores/2]).
 
 :- dynamic gui_answer/2.
@@ -29,7 +34,8 @@ gui_answer_list(Answers) :-
 
 gui_next_q(Qid) :-
     gui_answer_list(Answers),
-    next_contextual_question(Answers, Qid).
+    next_contextual_question(Answers, Qid),
+    !.
 
 gui_best_country(Country, Score) :-
     gui_answer_list(Answers),
@@ -39,3 +45,16 @@ gui_infer_scores(Country, Score) :-
     gui_answer_list(Answers),
     infer_scores(Answers, Scores),
     member(Country-Score, Scores).
+
+% Liczba aktywnych hipotez i nierozróżnionych par (do paska statusu GUI).
+gui_dialog_status(NumHypotheses, NumPairs, TopPair) :-
+    gui_answer_list(Answers),
+    active_hypotheses(Answers, Hypotheses),
+    length(Hypotheses, NumHypotheses),
+    unresolved_hypothesis_pairs(Answers, Pairs),
+    length(Pairs, NumPairs),
+    ( Pairs = [A-B | _] ->
+        TopPair = pair(A, B)
+    ; TopPair = none
+    ),
+    !.

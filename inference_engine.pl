@@ -7,9 +7,10 @@
 :- use_module(library(lists)).
 :- use_module('knowledge_base_template.pl').
 
-% Domyślne wagi hybrydy (gdy brak dowodów jednego typu).
-default_cf_weight(0.65).
-default_fuzzy_weight(0.35).
+% Domyślne wagi hybrydy §7.3: CF + fuzzy + reguły kontekstowe − weta.
+default_cf_weight(0.55).
+default_fuzzy_weight(0.30).
+default_context_weight(0.15).
 
 % Pewność przesłanki przy odpowiedzi „nie wiem”.
 unknown_premise_certainty(0.5).
@@ -19,11 +20,23 @@ unknown_premise_certainty(0.5).
 % Przy wielu równie pasujących krajach pewność każdego spada (nie skalujemy do max=1).
 infer_scores(Answers, Scores) :-
     findall(Country-Raw, (kraj(Country), country_score(Country, Answers, Raw)), Raws),
-    competitive_country_scores(Raws, Scores).
+    dedupe_country_raw_scores(Raws, Deduped),
+    competitive_country_scores(Deduped, Scores).
+
+% Jedna wartość Raw na kraj (zabezpieczenie przed wielokrotnym sukcesem podpredykatów).
+dedupe_country_raw_scores(Raws, Deduped) :-
+    findall(Country, kraj(Country), Countries),
+    maplist(max_raw_for_country(Raws), Countries, Deduped).
+
+max_raw_for_country(Raws, Country, Country-MaxRaw) :-
+    findall(R, member(Country-R, Raws), Rs),
+    ( Rs = [] -> MaxRaw = 0.0 ; max_list(Rs, MaxRaw) ).
 
 best_country(Answers, BestCountry-BestScore) :-
     infer_scores(Answers, Scores),
-    keysort_by_score_desc(Scores, [BestCountry-BestScore | _]).
+    keysort_by_score_desc(Scores, Sorted),
+    nth0(0, Sorted, BestCountry-BestScore),
+    !.
 
 explain_country(Country, Answers, Explanation) :-
     findall(
@@ -37,32 +50,40 @@ explain_country(Country, Answers, Explanation) :-
         VetoedRules
     ),
     cf_score(Country, Answers, CfScore),
+    cf_negative_score(Country, Answers, CfNeg),
     fuzzy_score(Country, Answers, FuzzyScore),
-    hybrid_weights(Country, Answers, Wcf, Wfz),
+    contextual_score(Country, Answers, CtxScore),
+    hybrid_weights(Country, Answers, Wcf, Wfz, Wctx),
     Explanation = explanation{
         country: Country,
         fired_rules: FiredRules,
         vetoed_rules: VetoedRules,
         cf_score: CfScore,
+        cf_negative: CfNeg,
         fuzzy_score: FuzzyScore,
+        contextual_score: CtxScore,
         weight_cf: Wcf,
-        weight_fuzzy: Wfz
+        weight_fuzzy: Wfz,
+        weight_context: Wctx
     }.
 
-% --- Wynik kraju: hybryda CF + rozmyte - weta ---
+% --- Wynik kraju §7.3: CF + fuzzy + kontekst − weta, potem wyostrzanie ---
 country_score(Country, Answers, FinalScore) :-
     cf_score(Country, Answers, CfScore),
     fuzzy_score(Country, Answers, FuzzyScore),
-    hybrid_weights(Country, Answers, Wcf, Wfz),
+    contextual_score(Country, Answers, CtxScore),
+    hybrid_weights(Country, Answers, Wcf, Wfz, Wctx),
     veto_penalty(Country, Answers, Penalty),
-    Raw is (Wcf * CfScore) + (Wfz * FuzzyScore) - Penalty,
-    clamp_01(Raw, FinalScore).
+    Raw is (Wcf * CfScore) + (Wfz * FuzzyScore) + (Wctx * CtxScore) - Penalty,
+    sharpen_score(Raw, Sharpened),
+    clamp_01(Sharpened, FinalScore).
 
-% Wagi zależne od liczby aktywnych reguł CF vs rozmytych dla danego kraju i odpowiedzi.
-hybrid_weights(Country, Answers, Wcf, Wfz) :-
-    count_fuzzy_rule_hits(Country, Answers, Nfz),
+% Wagi zależne od liczby trafień CF / fuzzy / kontekstowych.
+hybrid_weights(Country, Answers, Wcf, Wfz, Wctx) :-
     count_cf_rule_hits(Country, Answers, Ncf),
-    blend_hybrid_weights(Ncf, Nfz, Wcf, Wfz).
+    count_fuzzy_rule_hits(Country, Answers, Nfz),
+    count_contextual_hits(Country, Answers, Nctx),
+    blend_hybrid_weights(Ncf, Nfz, Nctx, Wcf, Wfz, Wctx).
 
 count_cf_rule_hits(Country, Answers, N) :-
     findall(
@@ -86,23 +107,74 @@ count_fuzzy_rule_hits(Country, Answers, N) :-
     ),
     length(L, N).
 
-blend_hybrid_weights(Ncf, Nfz, Wcf, Wfz) :-
-    Total is Ncf + Nfz,
+blend_hybrid_weights(Ncf, Nfz, Nctx, Wcf, Wfz, Wctx) :-
+    Total is Ncf + Nfz + Nctx,
     ( Total < 0.001 ->
         default_cf_weight(Wcf),
-        default_fuzzy_weight(Wfz)
+        default_fuzzy_weight(Wfz),
+        default_context_weight(Wctx)
     ; Wcf is Ncf / Total,
-      Wfz is Nfz / Total
+      Wfz is Nfz / Total,
+      Wctx is Nctx / Total
     ).
 
-% --- CF (MYCIN): łączenie pewności reguł ---
+count_contextual_hits(Country, Answers, N) :-
+    answered_contexts(Answers, Contexts),
+    Contexts \= [],
+    findall(
+        1,
+        ( member(Ctx, Contexts),
+          regula_cf(_Rid, Country, Premises, _W, _P),
+          rule_premises_in_context(Premises, Ctx),
+          premises_cf(Premises, Answers, CF),
+          CF >= 0.5
+        ),
+        L
+    ),
+    length(L, N).
+count_contextual_hits(_Country, _Answers, 0).
+
+% --- CF §7.1: dowody dodatnie (MYCIN) minus ujemne (sprzeczne przesłanki) ---
 cf_score(Country, Answers, Score) :-
+    cf_positive_score(Country, Answers, Pos),
+    cf_negative_score(Country, Answers, Neg),
+    Raw is Pos - Neg,
+    clamp_01(Raw, Score).
+
+cf_positive_score(Country, Answers, Score) :-
     findall(
         RuleCF,
         rule_fired(Country, Answers, _RuleId, RuleCF),
         RuleCFs
     ),
     combine_cfs_mycin(RuleCFs, Score).
+
+% Dowody ujemne: reguły z częściowo / całkowicie niespełnionymi przesłankami.
+cf_negative_score(Country, Answers, Neg) :-
+    findall(
+        Penalty,
+        ( regula_cf(_Rid1, Country, Premises, Weight, Priority),
+          premises_cf(Premises, Answers, PremiseCF),
+          PremiseCF < 0.5,
+          PremiseCF > 0.0,
+          PriorityFactor is min(1.0, Priority / 10.0),
+          Penalty is Weight * PriorityFactor * (1.0 - PremiseCF)
+        ),
+        WeakPenalties
+    ),
+    findall(
+        Penalty,
+        ( regula_cf(_Rid2, Country, Premises, Weight, Priority),
+          premises_cf(Premises, Answers, PremiseCF),
+          PremiseCF =< 0.01,
+          PriorityFactor is min(1.0, Priority / 10.0),
+          Penalty is Weight * PriorityFactor * 0.85
+        ),
+        StrongPenalties
+    ),
+    append(WeakPenalties, StrongPenalties, All),
+    sum_list(All, Sum),
+    clamp_01(Sum, Neg).
 
 rule_fired(Country, Answers, RuleId, RuleCF) :-
     regula_cf(RuleId, Country, Premises, Weight, Priority),
@@ -196,50 +268,173 @@ premise_holds(Premise, Answers) :-
     premise_certainty(Premise, Answers, Cert),
     Cert >= 0.5.
 
-% --- Rozmytość: Mamdani (min aktywacja) + agregacja max + wyostrzanie ---
+% --- Rozmytość §7.2: Mamdani → agregacja max → defuzyfikacja (środek ciężkości) ---
 fuzzy_score(Country, Answers, Score) :-
     findall(
-        Activation,
-        (regula_fuzzy(_Rid, Country, Feature, Label, Weight),
-         answer_for_feature(Feature, Answers, Input),
-         number(Input),
-         fuzzy_membership(Feature, Label, Input, Mu),
-         fuzzy_activation_with_competition(Feature, Label, Answers, Mu, Weight, Activation)),
+        FeatureScore,
+        ( cecha_typ(Feature, fuzzy),
+          answer_for_feature(Feature, Answers, Input),
+          number(Input),
+          mamdani_defuzzify_feature(Country, Feature, Input, Answers, FeatureScore),
+          FeatureScore > 0.001
+        ),
+        FeatureScores
+    ),
+    ( FeatureScores = [] ->
+        Score = 0.0
+    ; max_list(FeatureScores, Raw),
+      sharpen_score(Raw, Score)
+    ).
+
+% Mamdani: aktywacja reguł, agregacja MAX na uniwersum [0,100], COG, normalizacja do [0,1].
+mamdani_defuzzify_feature(Country, Feature, Input, Answers, Score01) :-
+    findall(
+        fuzzy_act(Label, Alpha),
+        ( regula_fuzzy(_Rid, Country, Feature, Label, Weight),
+          fuzzy_membership(Feature, Label, Input, Mu),
+          mamdani_activation(Mu, Weight, RawAlpha),
+          competing_countries_for_fuzzy(Feature, Label, Answers, Competitors),
+          Alpha is RawAlpha / Competitors,
+          Alpha > 0.001
+        ),
         Activations
     ),
     ( Activations = [] ->
-        Score = 0.0
-    ; max_list(Activations, Agg),
-      clamp_01(Agg, Score)
+        Score01 = 0.0
+    ; centroid_cog(Activations, Feature, Cog),
+      Score01 is Cog / 100.0
     ).
 
-% Reguła Mamdani: aktywacja = min(μ wejścia, wagi reguły).
 mamdani_activation(Mu, Weight, Activation) :-
     Activation is min(Mu, Weight).
 
-% Funkcje przynależności etykiet lingwistycznych na [0,100].
-% Aliasy semantyczne: niski/sredni/wysoki oraz plaski/pagorkowaty/gorzysty.
-fuzzy_membership(_Feature, Label, X, Mu) :-
+centroid_cog(Activations, Feature, Cog) :-
+    cog_sample_points(Points),
+    cog_accumulate(Points, Activations, Feature, 0.0, 0.0, Num, Den),
+    ( Den > 0.0001 -> Cog is Num / Den ; Cog = 0.0 ).
+
+cog_sample_points([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]).
+
+cog_accumulate([], _, _, Num, Den, Num, Den).
+cog_accumulate([Y | Rest], Activations, Feature, Num0, Den0, Num, Den) :-
+    mamdani_aggregated_mu(Y, Activations, Feature, MuY),
+    Num1 is Num0 + Y * MuY,
+    Den1 is Den0 + MuY,
+    cog_accumulate(Rest, Activations, Feature, Num1, Den1, Num, Den).
+
+% Agregacja Mamdani (max) przyciętych funkcji przynależności.
+mamdani_aggregated_mu(Y, Activations, Feature, MuAgg) :-
+    findall(
+        MuClip,
+        ( member(fuzzy_act(Label, Alpha), Activations),
+          linguistic_mu_at(Feature, Label, Y, MuLabel),
+          MuClip is min(Alpha, MuLabel),
+          MuClip > 0.0
+        ),
+        Clipped
+    ),
+    ( Clipped = [] -> MuAgg = 0.0 ; max_list(Clipped, MuAgg) ).
+
+% Funkcje przynależności: trójkąt (plaski, gorzysty) i trapez (pagorkowaty).
+fuzzy_membership(Feature, Label, X, Mu) :-
+    linguistic_mu_at(Feature, Label, X, Mu).
+
+linguistic_mu_at(_Feature, Label, X, Mu) :-
     linguistic_mu(Label, X, Mu).
 
 linguistic_mu(Label, X, Mu) :-
     ( label_alias(Label, Canonical) -> true ; Canonical = Label ),
-    triangle_label_mu(Canonical, X, Mu).
+    linguistic_shape(Canonical, Shape),
+    shape_mu(Shape, X, Mu).
 
 label_alias(niski, plaski).
 label_alias(sredni, pagorkowaty).
 label_alias(wysoki, gorzysty).
 
-triangle_label_mu(plaski, X, Mu) :-
-    clamp_01((50.0 - X) / 50.0, Mu).
-triangle_label_mu(pagorkowaty, X, Mu) :-
-    Left is X / 50.0,
-    Right is (100.0 - X) / 50.0,
-    min_list([Left, Right, 1.0], MinV),
-    Mu is max(0.0, MinV).
-triangle_label_mu(gorzysty, X, Mu) :-
-    clamp_01((X - 50.0) / 50.0, Mu).
-triangle_label_mu(_Other, _X, 0.0).
+% plaski / gorzysty: trójkąt; pagorkowaty: trapez (płaskie plateau).
+linguistic_shape(plaski, triangle(0, 0, 55)).
+linguistic_shape(pagorkowaty, trapez(15, 30, 70, 85)).
+linguistic_shape(gorzysty, triangle(45, 100, 100)).
+linguistic_shape(_Other, triangle(0, 50, 100)).
+
+shape_mu(triangle(A, B, C), X, Mu) :-
+    triangle_mu(A, B, C, X, Mu).
+shape_mu(trapez(A, B, C, D), X, Mu) :-
+    trapez_mu(A, B, C, D, X, Mu).
+
+triangle_mu(_A, B, _C, X, 1.0) :-
+    X =:= B,
+    !.
+triangle_mu(A, B, _C, X, Mu) :-
+    X >= A,
+    X =< B,
+    B > A,
+    !,
+    Mu is (X - A) / (B - A).
+triangle_mu(_A, B, C, X, Mu) :-
+    X > B,
+    X =< C,
+    C > B,
+    !,
+    Mu is (C - X) / (C - B).
+triangle_mu(_, _, _, _, 0.0).
+
+trapez_mu(A, B, C, D, X, Mu) :-
+    ( X =< A -> Mu = 0.0
+    ; X < B -> Mu is (X - A) / (B - A)
+    ; X =< C -> Mu = 1.0
+    ; X < D -> Mu is (D - X) / (D - C)
+    ; Mu = 0.0
+    ).
+
+% --- Reguły kontekstowe §7.3: wzmocnienie reguł CF z aktywnego kontekstu dialogu ---
+contextual_score(Country, Answers, Score) :-
+    answered_contexts(Answers, Contexts),
+    ( Contexts = [] ->
+        Score = 0.0
+    ; findall(
+          Contrib,
+          ( member(Ctx, Contexts),
+            regula_cf(_Rid, Country, Premises, Weight, Priority),
+            rule_premises_in_context(Premises, Ctx),
+            premises_cf(Premises, Answers, CF),
+            CF >= 0.5,
+            PriorityFactor is min(1.0, Priority / 10.0),
+            Contrib is Weight * PriorityFactor * CF * 0.35
+          ),
+          Contribs
+      ),
+      ( Contribs = [] ->
+          Score = 0.0
+      ; sum_list(Contribs, Sum),
+        clamp_01(Sum, Score)
+      )
+    ).
+
+answered_contexts(Answers, Contexts) :-
+    findall(
+        Ctx,
+        ( member(Qid-_, Answers),
+          pytanie(Qid, _Feature, _Type, Ctx)
+        ),
+        Raw
+    ),
+    sort(Raw, Contexts).
+
+rule_premises_in_context(Premises, Ctx) :-
+    member(Premise, Premises),
+    premise_feature(Premise, Feature),
+    pytanie(_Qid, Feature, _Type, Ctx),
+    !.
+
+premise_feature(cecha(Feature, _), Feature).
+premise_feature(cecha_enum(Feature, _), Feature).
+premise_feature(cecha_num(Feature, _, _), Feature).
+
+% Wyostrzanie wyniku (funkcja S-kształtna na [0,1]).
+sharpen_score(X, Y) :-
+    clamp_01(X, Xc),
+    Y is Xc * Xc * (3.0 - 2.0 * Xc).
 
 % --- Weta ---
 veto_penalty(Country, Answers, Penalty) :-
@@ -293,12 +488,6 @@ competing_countries_for_premises(Premises, Answers, N) :-
     sort(Countries, Unique),
     length(Unique, Count),
     N is max(1, Count).
-
-% Ta sama cecha+etykieta rozmyta u wielu krajów → dziel aktywację przez liczbę konkurentów.
-fuzzy_activation_with_competition(Feature, Label, Answers, Mu, Weight, Activation) :-
-    mamdani_activation(Mu, Weight, Raw),
-    competing_countries_for_fuzzy(Feature, Label, Answers, Competitors),
-    Activation is Raw / Competitors.
 
 competing_countries_for_fuzzy(Feature, Label, Answers, N) :-
     findall(

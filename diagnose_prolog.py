@@ -110,11 +110,36 @@ def main() -> int:
             pass
     print()
 
-    rows = list(p.query(f"{m}:gui_next_q(Qid)"))
+    rows = list(p.query(f"{m}:gui_next_q(Qid)", maxresult=1))
     print("gui_next_q (kolejne pytanie przy tych odpowiedziach):", rows)
     if rows:
         print("  Qid:", repr(rows[0].get("Qid")))
+    extra = list(p.query(f"{m}:gui_next_q(Qid)", maxresult=2))
+    if len(extra) > 1:
+        print(f"  UWAGA: gui_next_q ma >1 rozwiązanie ({len(extra)}) — sprawdź determinizm dialog_strategy.")
 
+    print()
+    print("=== Reguły minimalne (minimal_rules.pl) ===")
+    try:
+        core_rows = list(p.query("minimal_rules:core_attributes(C)"))
+        reduct_rows = list(p.query("minimal_rules:find_reduct(R)"))
+        attr_rows = list(p.query("minimal_rules:all_condition_attributes(A)"))
+        if attr_rows:
+            attrs = attr_rows[0].get("A")
+            print("  atrybuty warunkowe:", len(attrs) if isinstance(attrs, list) else attrs)
+        if core_rows:
+            print("  rdzeń (core):", core_rows[0].get("C"))
+        if reduct_rows:
+            print("  redukt:", reduct_rows[0].get("R"))
+        mr = list(
+            p.query(
+                "minimal_rules:minimal_rules_for_country(usa, Rules), length(Rules, N)"
+            )
+        )
+        if mr:
+            print("  reguły minimalne (usa):", mr[0].get("N"))
+    except Exception as exc:
+        print("  BŁĄD minimal_rules:", exc)
     print()
     print("=== Koniec diagnostyki ===")
     print("Skopiuj WSZYSTKO od „=== ProGeoLog” powyżej i wklej do czatu.")
