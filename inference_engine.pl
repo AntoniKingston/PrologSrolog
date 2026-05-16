@@ -1,11 +1,18 @@
 :- module(inference_engine, [
     infer_scores/2,
     best_country/2,
-    explain_country/3
+    explain_country/3,
+    clear_hipotezy/0,
+    rebuild_hipotezy/1,
+    hipoteza/2,
+    wynik_koncowy/2
 ]).
 
 :- use_module(library(lists)).
 :- use_module('knowledge_base_template.pl').
+
+% Konkluzje dynamiczne (konspekt §4.2) — nie są faktami w bazie wiedzy.
+:- dynamic hipoteza/2.
 
 % Domyślne wagi hybrydy §7.3: CF + fuzzy + reguły kontekstowe − weta.
 default_cf_weight(0.55).
@@ -15,13 +22,38 @@ default_context_weight(0.15).
 % Pewność przesłanki przy odpowiedzi „nie wiem”.
 unknown_premise_certainty(0.5).
 
+% Próg weto, gdy użytkownik wskazał język niebędący urzędowym w danym kraju.
+language_veto_threshold(0.78).
+
 % infer_scores(+Answers, -Scores)
 % Wyniki po konkurencji między krajami: udział Raw_i / suma(Raw_j) (suma ≈ 1.0).
-% Przy wielu równie pasujących krajach pewność każdego spada (nie skalujemy do max=1).
+% Po obliczeniu odświeża dynamiczne hipoteza/2 (konspekt §4.2).
 infer_scores(Answers, Scores) :-
+    compute_infer_scores(Answers, Scores),
+    sync_hipotezy(Scores).
+
+compute_infer_scores(Answers, Scores) :-
     findall(Country-Raw, (kraj(Country), country_score(Country, Answers, Raw)), Raws),
     dedupe_country_raw_scores(Raws, Deduped),
     competitive_country_scores(Deduped, Scores).
+
+% --- Hipotezy i wynik końcowy (konspekt: konkluzje konstruowane w trakcie wnioskowania) ---
+clear_hipotezy :-
+    retractall(hipoteza(_, _)).
+
+rebuild_hipotezy(Answers) :-
+    infer_scores(Answers, _).
+
+sync_hipotezy(Scores) :-
+    clear_hipotezy(),
+    forall(member(Country-Score, Scores), assertz(hipoteza(Country, Score))).
+
+% wynik_koncowy(+Kraj, +Pewnosc) — najlepsza hipoteza spośród aktualnie zaassertowanych.
+wynik_koncowy(Kraj, Pewnosc) :-
+    findall(P-K, hipoteza(K, P), Pairs),
+    Pairs \= [],
+    keysort(Pairs, Asc),
+    last(Asc, Pewnosc-Kraj).
 
 % Jedna wartość Raw na kraj (zabezpieczenie przed wielokrotnym sukcesem podpredykatów).
 dedupe_country_raw_scores(Raws, Deduped) :-
@@ -33,9 +65,8 @@ max_raw_for_country(Raws, Country, Country-MaxRaw) :-
     ( Rs = [] -> MaxRaw = 0.0 ; max_list(Rs, MaxRaw) ).
 
 best_country(Answers, BestCountry-BestScore) :-
-    infer_scores(Answers, Scores),
-    keysort_by_score_desc(Scores, Sorted),
-    nth0(0, Sorted, BestCountry-BestScore),
+    rebuild_hipotezy(Answers),
+    wynik_koncowy(BestCountry, BestScore),
     !.
 
 explain_country(Country, Answers, Explanation) :-
@@ -157,6 +188,7 @@ cf_negative_score(Country, Answers, Neg) :-
           premises_cf(Premises, Answers, PremiseCF),
           PremiseCF < 0.5,
           PremiseCF > 0.0,
+          rule_has_answered_premise_failure(Premises, Answers),
           PriorityFactor is min(1.0, Priority / 10.0),
           Penalty is Weight * PriorityFactor * (1.0 - PremiseCF)
         ),
@@ -167,6 +199,7 @@ cf_negative_score(Country, Answers, Neg) :-
         ( regula_cf(_Rid2, Country, Premises, Weight, Priority),
           premises_cf(Premises, Answers, PremiseCF),
           PremiseCF =< 0.01,
+          rule_has_answered_premise_failure(Premises, Answers),
           PriorityFactor is min(1.0, Priority / 10.0),
           Penalty is Weight * PriorityFactor * 0.85
         ),
@@ -181,9 +214,9 @@ rule_fired(Country, Answers, RuleId, RuleCF) :-
     premises_cf(Premises, Answers, PremiseCF),
     PremiseCF > 0.01,
     PriorityFactor is min(1.0, Priority / 10.0),
-    RawRuleCF is Weight * PriorityFactor * PremiseCF,
-    competing_countries_for_premises(Premises, Answers, Competitors),
-    RuleCF is RawRuleCF / Competitors.
+    rule_competition_divisor(Premises, Answers, Divisor),
+    ScaledWeight is Weight / Divisor,
+    RuleCF is ScaledWeight * PriorityFactor * PremiseCF.
 
 % Iloczyn pewności przesłanek (AND w MYCIN).
 premises_cf([], _, 1.0).
@@ -234,6 +267,20 @@ enum_answer_certainty(Feature, Answers, Expected, Cert) :-
         Cert = 0.0
     ; Cert = 0.0
     ).
+
+feature_answered(Feature, Answers) :-
+    pytanie(Qid, Feature, _, _),
+    memberchk(Qid-_, Answers),
+    !.
+
+% Kara CF tylko gdy użytkownik podał wartość sprzeczną z przesłanką (nie gdy pytanie nie padło).
+rule_has_answered_premise_failure(Premises, Answers) :-
+    member(Premise, Premises),
+    premise_feature(Premise, Feature),
+    feature_answered(Feature, Answers),
+    premise_certainty(Premise, Answers, Cert),
+    Cert < 0.5,
+    !.
 
 % Miękkie dopasowanie przedziału (trapez na [Min,Max], opad 25 pkt poza zakresem).
 numeric_range_certainty(Feature, Answers, _Min, _Max, Cert) :-
@@ -440,6 +487,7 @@ sharpen_score(X, Y) :-
 
 % --- Weta ---
 veto_penalty(Country, Answers, Penalty) :-
+    language_veto_threshold(LangThreshold),
     findall(
         P,
         ( ( weto(Country, Premise, Threshold),
@@ -452,11 +500,29 @@ veto_penalty(Country, Answers, Penalty) :-
             Strength >= Threshold,
             P = 0.5
           )
+        ; ( language_zakaz_conflict_strength(Country, Answers, Strength),
+            Strength >= LangThreshold,
+            P = 0.5
+          )
         ),
         Penalties
     ),
     sum_list(Penalties, Raw),
     clamp_01(Raw, Penalty).
+
+% Obserwowany język na znakach nie jest urzędowy w kraju (wielojęzyczność: wiele faktów jezyk_urzedowy_kraju/2).
+language_zakaz_conflict_strength(Country, Answers, Strength) :-
+    answer_for_feature(jezyk_na_znakach, Answers, Observed),
+    language_observation_for_veto(Observed),
+    ( jezyk_urzedowy_kraju(Country, Observed) ->
+        Strength = 0.0
+    ; Strength = 1.0
+    ).
+
+language_observation_for_veto(Lang) :-
+    Lang \= unknown,
+    Lang \= nie_wiem,
+    Lang \= inny.
 
 zakaz_conflict_strength(Feature, Forbidden, Answers, Strength) :-
     ( answer_for_feature(Feature, Answers, unknown) -> Strength = 0.0
@@ -490,6 +556,32 @@ bool_conflict_strength(Feature, Answers, WantYes, Strength) :-
     ; answer_for_feature(Feature, Answers, no), WantYes = true -> Strength = 1.0
     ; Strength = 0.0
     ).
+
+% Dzielnik wagi reguły: 1/N (odwrotna proporcjonalność do liczby krajów „powiązanych”).
+% Pojedyncza przesłanka enum (np. język): N = kraje mające tę wartość w dowolnej regule CF.
+% Wiele przesłanek: N = kraje z identyczną listą przesłanek pasującą do odpowiedzi.
+rule_competition_divisor(Premises, Answers, Divisor) :-
+    Premises = [cecha_enum(Feature, Value)],
+    premises_cf(Premises, Answers, PremiseCF),
+    PremiseCF > 0.01,
+    !,
+    enum_value_country_count(Feature, Value, Divisor).
+rule_competition_divisor(Premises, Answers, Divisor) :-
+    competing_countries_for_premises(Premises, Answers, Divisor).
+
+% Kraje powiązane z wartością cechy enum (niezależnie od pozostałych przesłanek reguły).
+enum_value_country_count(Feature, Value, N) :-
+    findall(
+        Country,
+        ( kraj(Country),
+          regula_cf(_Rid, Country, RulePremises, _W, _P),
+          member(cecha_enum(Feature, Value), RulePremises)
+        ),
+        Countries
+    ),
+    sort(Countries, Unique),
+    length(Unique, Count),
+    N is max(1, Count).
 
 % Liczba krajów z regułą CF o tych samych przesłankach, które pasują do odpowiedzi.
 competing_countries_for_premises(Premises, Answers, N) :-

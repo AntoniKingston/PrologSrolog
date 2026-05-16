@@ -4,6 +4,7 @@
 :- module(knowledge_base, [
     kraj/1,
     kraj_ui_label/2,
+    jezyk_urzedowy_kraju/2,
     pytanie/4,
     cecha_typ/2,
     enum_wartosci/2,
@@ -17,7 +18,6 @@
 % =========================
 % 1) Kraje (decyzje)
 % =========================
-% Aktywne kraje w prototypie (12). Pozostałe — zakomentowane % (nie #).
 kraj(argentyna).
 kraj(australia).
 kraj(brazylia).
@@ -30,6 +30,25 @@ kraj(sri_lanka).
 kraj(zjednoczone_emiraty_arabskie).
 kraj(wielka_brytania).
 kraj(usa).
+
+% Języki urzędowe / typowe na znakach drogowych (wiele faktów na kraj).
+% Weto językowe w inference_engine: obserwacja L wyklucza kraj bez jezyk_urzedowy_kraju(K, L).
+% Przy dodawaniu kraju: dopisz kraj/1 oraz jeden lub więcej jezyk_urzedowy_kraju/2.
+jezyk_urzedowy_kraju(argentyna, hiszpanski).
+jezyk_urzedowy_kraju(australia, angielski).
+jezyk_urzedowy_kraju(brazylia, portugalski).
+jezyk_urzedowy_kraju(rosja, rosyjski).
+jezyk_urzedowy_kraju(senegal, francuski).
+jezyk_urzedowy_kraju(singapur, angielski).
+jezyk_urzedowy_kraju(poludniowa_afryka, angielski).
+jezyk_urzedowy_kraju(korea_poludniowa, koreanski).
+jezyk_urzedowy_kraju(sri_lanka, syngaleski).
+jezyk_urzedowy_kraju(sri_lanka, angielski).
+jezyk_urzedowy_kraju(zjednoczone_emiraty_arabskie, arabski).
+jezyk_urzedowy_kraju(wielka_brytania, angielski).
+jezyk_urzedowy_kraju(usa, angielski).
+% kraj(kanada). jezyk_urzedowy_kraju(kanada, angielski). jezyk_urzedowy_kraju(kanada, francuski).
+
 % kraj(austria). kraj(bangladesz). kraj(boliwia). kraj(botswana).
 % kraj(kambodza). kraj(kanada). kraj(chile). kraj(kolumbia).
 % kraj(dominikana). kraj(estonia). kraj(finlandia). kraj(francja).
@@ -161,6 +180,7 @@ cecha_typ(obecnosc_pustyni, enum).
 cecha_typ(obecnosc_rownin, enum).
 cecha_typ(obecnosc_sniegu, enum).
 cecha_typ(pasy_srodkowe_zolte, enum).
+cecha_typ(polkula, enum).
 cecha_typ(strona_ruchu, enum).
 cecha_typ(styl_architektury, enum).
 cecha_typ(typ_barierek_drogowych, enum).
@@ -200,6 +220,7 @@ pytanie(q_obecnosc_palm, obecnosc_palm, enum, srodowisko).
 pytanie(q_obecnosc_pustyni, obecnosc_pustyni, enum, geografia).
 pytanie(q_obecnosc_rownin, obecnosc_rownin, enum, geografia).
 pytanie(q_obecnosc_sniegu, obecnosc_sniegu, enum, geografia).
+pytanie(q_polkula, polkula, enum, geografia).
 pytanie(q_pasy_srodkowe_zolte, pasy_srodkowe_zolte, enum, transport).
 pytanie(q_strona_ruchu, strona_ruchu, enum, transport).
 pytanie(q_styl_architektury, styl_architektury, enum, zabudowa).
@@ -224,7 +245,7 @@ pytanie(q_zageszczenie_lasu, zageszczenie_lasu, slider, srodowisko).
 enum_wartosci(dostep_do_morza, [widoczny, brak, nie_wiem]).
 enum_wartosci(format_tablicy_rejestracyjnej, [dluga_eu, krotka_usa, kwadratowa, niestandardowa, nie_wiem]).
 enum_wartosci(generacja_kamery_google, [gen2, gen3, gen4, nieznana, nie_wiem]).
-enum_wartosci(jezyk_na_znakach, [angielski, hiszpanski, francuski, niemiecki, arabski, rosyjski, japonski, koreanski, inny, nie_wiem]).
+enum_wartosci(jezyk_na_znakach, [angielski, hiszpanski, portugalski, francuski, niemiecki, arabski, rosyjski, japonski, koreanski, syngaleski, inny, nie_wiem]).
 enum_wartosci(kolor_tylnej_tablicy, [bialy, zolty, czerwony, czarny, inny, nie_wiem]).
 enum_wartosci(kolor_znaku_ograniczenia_predkosci, [bialy_czarny_napis, z_czerwona_obwodka, inny, nie_wiem]).
 enum_wartosci(kolor_znaku_ostrzegawczego, [zolty_czarny, czerwony_bialy, inny, nie_wiem]).
@@ -239,6 +260,7 @@ enum_wartosci(obecnosc_pustyni, [obecna, brak, nie_wiem]).
 enum_wartosci(obecnosc_rownin, [obecna, brak, nie_wiem]).
 enum_wartosci(obecnosc_sniegu, [obecna, brak, nie_wiem]).
 enum_wartosci(pasy_srodkowe_zolte, [widoczne, brak, nie_wiem]).
+enum_wartosci(polkula, [pln, pld, nie_wiem]).
 enum_wartosci(strona_ruchu, [lewostronny, prawostronny, nie_wiem]).
 enum_wartosci(styl_architektury, [skandynawski, kolonialny, modernistyczny, srodziemnomorski, postsowiecki, azjatycki, mieszany, nie_wiem]).
 enum_wartosci(typ_barierek_drogowych, [metalowe_faliste, betonowe, linowe, brak, nie_wiem]).
@@ -249,6 +271,9 @@ enum_wartosci(wzor_slupka_drogowego, [pasy_bialo_czerwone, jednokolorowy, betono
 enum_wartosc(Cecha, W) :-
     enum_wartosci(Cecha, Lista),
     member(W, Lista).
+
+% Konkluzje (hipoteza/2, wynik_koncowy/2) nie są tu zapisane — powstają dynamicznie
+% w inference_engine.pl na podstawie reguł produkcji i odpowiedzi użytkownika (konspekt §4.2).
 
 % =========================
 % 4) Reguły przybliżone (CF)
@@ -272,8 +297,8 @@ regula_cf(r_cf_005, argentyna,
     [cecha_enum(kolorystyka_budynkow, pastelowa), cecha_enum(typ_biomu, tropikalny)],
     0.52, 6).
 regula_cf(r_cf_006, argentyna,
-    [cecha_enum(jezyk_na_znakach, inny), cecha_enum(obecnosc_palm, brak)],
-    0.48, 5).
+    [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, brak)],
+    0.62, 6).
 regula_cf(r_cf_007, argentyna,
     [cecha_num(suchosc_klimatu, 40, 75), cecha_enum(styl_architektury, mieszany)],
     0.45, 5).
@@ -285,7 +310,7 @@ regula_cf(r_cf_009, australia,
     0.92, 10).
 regula_cf(r_cf_010, australia,
     [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, brak)],
-    0.78, 9).
+    0.62, 6).
 regula_cf(r_cf_011, australia,
     [cecha_enum(jezyk_na_znakach, angielski), cecha_enum(strona_ruchu, lewostronny)],
     0.75, 8).
@@ -311,7 +336,7 @@ regula_cf(r_cf_018, brazylia,
     [cecha_enum(typ_biomu, tropikalny), cecha_num(suchosc_klimatu, 0, 40)],
     0.85, 10).
 regula_cf(r_cf_019, brazylia,
-    [cecha_enum(jezyk_na_znakach, inny), cecha_enum(obecnosc_palm, obecna)],
+    [cecha_enum(jezyk_na_znakach, portugalski), cecha_enum(obecnosc_palm, obecna)],
     0.78, 9).
 regula_cf(r_cf_020, brazylia,
     [cecha_enum(strona_ruchu, prawostronny), cecha_enum(kolorystyka_budynkow, pastelowa)],
@@ -320,13 +345,13 @@ regula_cf(r_cf_021, brazylia,
     [cecha_num(obecnosc_motocykli, 50, 100), cecha_enum(obecnosc_domow_jednorodzinnych, obecna)],
     0.58, 7).
 regula_cf(r_cf_022, brazylia,
-    [cecha_enum(format_tablicy_rejestracyjnej, dluga_eu), cecha_enum(jezyk_na_znakach, inny)],
+    [cecha_enum(format_tablicy_rejestracyjnej, dluga_eu), cecha_enum(jezyk_na_znakach, portugalski)],
     0.52, 6).
 regula_cf(r_cf_023, brazylia,
     [cecha_enum(styl_architektury, kolonialny), cecha_enum(typ_biomu, tropikalny)],
     0.55, 7).
 regula_cf(r_cf_024, brazylia,
-    [cecha_enum(jezyk_na_znakach, hiszpanski), cecha_enum(strona_ruchu, prawostronny)],
+    [cecha_enum(jezyk_na_znakach, portugalski), cecha_enum(strona_ruchu, prawostronny)],
     0.48, 5).
 regula_cf(r_cf_025, brazylia,
     [cecha_enum(obecnosc_gor_ostrych, brak), cecha_num(gestosc_zabudowy, 40, 80)],
@@ -377,8 +402,8 @@ regula_cf(r_cf_040, senegal,
     [cecha_enum(jezyk_na_znakach, francuski), cecha_enum(kolorystyka_budynkow, pastelowa)],
     0.48, 5).
 regula_cf(r_cf_041, senegal,
-    [cecha_num(suchosc_klimatu, 15, 50), cecha_enum(styl_architektury, mieszany)],
-    0.45, 5).
+    [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, brak)],
+    0.58, 6).
 regula_cf(r_cf_042, singapur,
     [cecha_enum(jezyk_na_znakach, angielski), cecha_enum(styl_architektury, modernistyczny)],
     0.90, 10).
@@ -422,8 +447,8 @@ regula_cf(r_cf_055, poludniowa_afryka,
     [cecha_enum(kolor_tylnej_tablicy, zolty), cecha_enum(format_tablicy_rejestracyjnej, dluga_eu)],
     0.58, 6).
 regula_cf(r_cf_056, poludniowa_afryka,
-    [cecha_num(suchosc_klimatu, 35, 70), cecha_enum(obecnosc_palm, brak)],
-    0.52, 6).
+    [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, brak)],
+    0.62, 6).
 regula_cf(r_cf_057, poludniowa_afryka,
     [cecha_enum(typ_biomu, srodziemnomorski), cecha_num(zachmurzenie, 30, 70)],
     0.48, 5).
@@ -500,8 +525,8 @@ regula_cf(r_cf_081, zjednoczone_emiraty_arabskie,
     [cecha_enum(strona_ruchu, prawostronny), cecha_enum(obecnosc_sniegu, brak)],
     0.62, 7).
 regula_cf(r_cf_082, zjednoczone_emiraty_arabskie,
-    [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, obecna)],
-    0.58, 6).
+    [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, brak)],
+    0.62, 6).
 regula_cf(r_cf_083, zjednoczone_emiraty_arabskie,
     [cecha_enum(format_tablicy_rejestracyjnej, dluga_eu), cecha_enum(jezyk_na_znakach, arabski)],
     0.48, 5).
@@ -554,8 +579,26 @@ regula_cf(r_cf_099, usa,
     [cecha_enum(ksztalt_znaku_ostrzegawczego, romb), cecha_enum(kolor_znaku_ostrzegawczego, zolty_czarny)],
     0.62, 7).
 regula_cf(r_cf_100, usa,
-    [cecha_enum(generacja_kamery_google, gen4), cecha_num(suchosc_klimatu, 30, 65)],
-    0.45, 5).
+    [cecha_enum(typ_biomu, pustynny), cecha_enum(obecnosc_palm, brak)],
+    0.58, 6).
+
+% Język na znakach — jedna przesłanka (waga bazowa 1.0; skalowanie 1/N w inference_engine).
+% N = liczba aktywnych krajów z tą wartością języka w regułach CF; nowy kraj → niższy wynik.
+regula_cf(r_cf_101, senegal,
+    [cecha_enum(jezyk_na_znakach, francuski)], 1.0, 10).
+regula_cf(r_cf_102, rosja,
+    [cecha_enum(jezyk_na_znakach, rosyjski)], 1.0, 10).
+regula_cf(r_cf_103, korea_poludniowa,
+    [cecha_enum(jezyk_na_znakach, koreanski)], 1.0, 10).
+regula_cf(r_cf_104, brazylia,
+    [cecha_enum(jezyk_na_znakach, portugalski)], 1.0, 10).
+regula_cf(r_cf_105, sri_lanka,
+    [cecha_enum(jezyk_na_znakach, syngaleski)], 1.0, 10).
+regula_cf(r_cf_106, argentyna,
+    [cecha_enum(jezyk_na_znakach, hiszpanski)], 1.0, 10).
+regula_cf(r_cf_107, zjednoczone_emiraty_arabskie,
+    [cecha_enum(jezyk_na_znakach, arabski)], 1.0, 10).
+
 % =========================
 % 5) Reguły rozmyte (30 — 2–3 na kraj aktywny)
 % =========================
@@ -596,20 +639,41 @@ regula_fuzzy(r_fz_030, usa, suchosc_klimatu, plaski, 0.52).
 % =========================
 % weto(Kraj, cecha_enum(F, WymaganaWartosc), Prog) — konflikt gdy odpowiedź inna niż W.
 % weto_zakaz(Kraj, Cecha, ZabronionaWartosc, Prog) — konflikt gdy użytkownik wybrał tę wartość.
+% polkula — wyłącznie w weto (brak reguł CF/rozmytych); pomija kraje między zwrotnikami.
 
+% --- Weta: strona ruchu (każdy aktywny kraj) ---
+weto(argentyna, cecha_enum(strona_ruchu, prawostronny), 0.75).
+weto(australia, cecha_enum(strona_ruchu, lewostronny), 0.75).
+weto(brazylia, cecha_enum(strona_ruchu, prawostronny), 0.75).
+weto(rosja, cecha_enum(strona_ruchu, prawostronny), 0.75).
+weto(senegal, cecha_enum(strona_ruchu, prawostronny), 0.75).
+weto(singapur, cecha_enum(strona_ruchu, lewostronny), 0.75).
+weto(poludniowa_afryka, cecha_enum(strona_ruchu, lewostronny), 0.75).
+weto(korea_poludniowa, cecha_enum(strona_ruchu, prawostronny), 0.75).
+weto(sri_lanka, cecha_enum(strona_ruchu, lewostronny), 0.75).
+weto(zjednoczone_emiraty_arabskie, cecha_enum(strona_ruchu, prawostronny), 0.75).
+weto(wielka_brytania, cecha_enum(strona_ruchu, lewostronny), 0.75).
+weto(usa, cecha_enum(strona_ruchu, prawostronny), 0.75).
+
+% --- Weta: półkula (kraje poza pasem międzyzwrotnikowym) ---
+% Bez weta półkuli: brazylia, senegal, singapur, sri_lanka (obszar między zwrotnikami).
+weto(argentyna, cecha_enum(polkula, pld), 0.75).
+weto(australia, cecha_enum(polkula, pld), 0.75).
+weto(rosja, cecha_enum(polkula, pln), 0.75).
+weto(poludniowa_afryka, cecha_enum(polkula, pld), 0.75).
+weto(korea_poludniowa, cecha_enum(polkula, pln), 0.75).
+weto(zjednoczone_emiraty_arabskie, cecha_enum(polkula, pln), 0.75).
+weto(wielka_brytania, cecha_enum(polkula, pln), 0.75).
+weto(usa, cecha_enum(polkula, pln), 0.75).
+weto(brazylia, cecha_enum(typ_biomu, borealny), 0.80).
+weto(zjednoczone_emiraty_arabskie, cecha_enum(obecnosc_sniegu, brak), 0.75).
+weto(usa, cecha_enum(kolor_tylnej_tablicy, zolty), 0.75).
+
+% --- Weta: znaki drogowe ---
 weto_zakaz(australia, kolor_tylnej_tablicy, zolty, 0.80).
 weto_zakaz(australia, kolor_znaku_ograniczenia_predkosci, z_czerwona_obwodka, 0.75).
 weto_zakaz(poludniowa_afryka, kolor_znaku_ograniczenia_predkosci, z_czerwona_obwodka, 0.80).
 weto_zakaz(wielka_brytania, kolor_znaku_ograniczenia_predkosci, z_czerwona_obwodka, 0.80).
-weto_zakaz(argentyna, jezyk_na_znakach, koreanski, 0.75).
-weto(brazylia, cecha_enum(typ_biomu, borealny), 0.80).
-weto_zakaz(rosja, jezyk_na_znakach, japonski, 0.75).
-weto_zakaz(senegal, jezyk_na_znakach, rosyjski, 0.75).
-weto(singapur, cecha_enum(strona_ruchu, lewostronny), 0.75).
-weto(korea_poludniowa, cecha_enum(jezyk_na_znakach, koreanski), 0.80).
-weto(sri_lanka, cecha_enum(strona_ruchu, lewostronny), 0.75).
-weto(zjednoczone_emiraty_arabskie, cecha_enum(obecnosc_sniegu, brak), 0.75).
-weto(usa, cecha_enum(strona_ruchu, prawostronny), 0.70).
-weto(usa, cecha_enum(kolor_tylnej_tablicy, zolty), 0.75).
+% Weto językowe: jezyk_urzedowy_kraju/2 + inference_engine:language_zakaz_conflict_strength/3
 % =========================
 % 7)

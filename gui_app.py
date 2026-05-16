@@ -117,7 +117,6 @@ class ExpertSystemGUI(QMainWindow):
         self.init_failed: bool = False
         self.dialog_finished: bool = False
         self.base_dir = Path(__file__).resolve().parent
-        self._last_prolog_sync_count: int | None = None
 
         self.prolog = None
         self._init_ui()
@@ -127,6 +126,7 @@ class ExpertSystemGUI(QMainWindow):
         self._load_questions()
         if self.init_failed:
             return
+        self._reset_prolog_session()
         self._render_next_question()
 
     def _init_ui(self) -> None:
@@ -143,8 +143,12 @@ class ExpertSystemGUI(QMainWindow):
         self.answer_layout = QVBoxLayout(self.answer_container)
 
         buttons = QHBoxLayout()
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.setToolTip("Wyczyść odpowiedzi i rozpocznij dialog od początku")
+        self.reset_button.clicked.connect(self.on_reset_clicked)
         self.next_button = QPushButton("Zatwierdź i dalej")
         self.next_button.clicked.connect(self.on_next_clicked)
+        buttons.addWidget(self.reset_button)
         buttons.addWidget(self.next_button)
 
         dialog_col.addWidget(self.status_label)
@@ -351,42 +355,11 @@ class ExpertSystemGUI(QMainWindow):
             return True
         return False
 
-    def _dialog_context_status(self) -> str:
-        if not self.prolog or self.init_failed:
-            return ""
-        try:
-            rows = list(
-                self.prolog.query(
-                    f"{_SESSION_MOD}:gui_dialog_status(Nh, Np, TopPair)"
-                )
-            )
-        except Exception:
-            return ""
-        if not rows:
-            return ""
-        row = rows[0]
-        nh = int(float(str(row["Nh"]).replace(",", ".")))
-        np = int(float(str(row["Np"]).replace(",", ".")))
-        top = row.get("TopPair")
-        pair_part = ""
-        if top is not None:
-            top_s = _prolog_text(top)
-            if top_s and top_s.lower() != "none":
-                pair_part = f" | para: {top_s.replace('pair(', '').replace(')', '')}"
-        return f" | hipotezy: {nh} | pary: {np}{pair_part}"
-
     def _update_status_line(self) -> None:
         n = len(self.answers)
         total = len(self.questions)
-        pl = self._last_prolog_sync_count
-        pl_part = ""
-        if pl is not None:
-            pl_part = f" | fakty w Prologu: {pl}"
-            if n > 0 and pl != n:
-                pl_part += " (!)"
-        ctx = self._dialog_context_status()
         self.status_label.setText(
-            f"Dialog kontekstowy | pytań w bazie: {total} | udzielono: {n}{pl_part}{ctx}"
+            f"Dialog kontekstowy | pytań w bazie: {total} | udzielono: {n}"
         )
 
     def _sync_prolog_session_from_answers(self) -> None:
@@ -425,26 +398,12 @@ class ExpertSystemGUI(QMainWindow):
                     esc = vs.replace("\\", "\\\\").replace("'", "''")
                     self._prolog_assertz_clause(f"{m}:gui_answer({q}, '{esc}')")
                     written += 1
-            rows = list(self.prolog.query(f"{m}:gui_answer_count(N)"))
-            n_pl = -1
-            if rows:
-                n_pl = int(float(str(rows[0]["N"]).replace(",", ".")))
-            self._last_prolog_sync_count = n_pl if n_pl >= 0 else None
-            if len(self.answers) > 0:
-                if n_pl < 0:
-                    _log_progeo("gui_answer_count nie zwrócił wyniku — sprawdź gui_session.pl")
-                elif n_pl != len(self.answers):
-                    _log_progeo(
-                        f"sync: w GUI {len(self.answers)} odpowiedzi, w Prologu {n_pl} faktów "
-                        f"(zapisano pętlą: {written}). Pominięte: {skipped or 'brak'}"
-                    )
-                elif written != len(self.answers):
-                    _log_progeo(
-                        f"sync: niespójność zapisów (pętla {written} vs GUI {len(self.answers)}). "
-                        f"Pominięte: {skipped or 'brak'}"
-                    )
+            if len(self.answers) > 0 and written != len(self.answers):
+                _log_progeo(
+                    f"sync: zapisano {written} z {len(self.answers)} odpowiedzi. "
+                    f"Pominięte: {skipped or 'brak'}"
+                )
         except Exception as exc:
-            self._last_prolog_sync_count = None
             _log_progeo(f"Błąd synchronizacji: {exc}")
             traceback.print_exc(file=sys.stderr)
             traceback.print_exc(file=sys.stdout)
@@ -618,11 +577,53 @@ class ExpertSystemGUI(QMainWindow):
             pass
         return country_atom
 
+    def _reset_prolog_session(self) -> None:
+        if not self.prolog:
+            return
+        try:
+            list(self.prolog.query(f"{_SESSION_MOD}:gui_reset"))
+        except Exception as exc:
+            _log_progeo(f"gui_reset: {exc}")
+            self._prolog_retractall(f"{_SESSION_MOD}:gui_answer(_, _)")
+
+    def _reset_dialog(self) -> None:
+        """Przywraca stan początkowy GUI i dynamicznej sesji Prolog (gui_answer/2)."""
+        self.answers.clear()
+        self.dialog_finished = False
+        self.current_question = None
+        self._reset_prolog_session()
+        self.ranking_title.setText("Top 10 krajów (pewność)")
+        self.next_button.setEnabled(True)
+        self._clear_answer_widgets()
+        self._update_status_line()
+        self.ranking_list.clear()
+        self.ranking_list.addItem("Udziel pierwszej odpowiedzi, aby zobaczyć ranking.")
+        if not self.init_failed and self.questions:
+            self._render_next_question()
+        else:
+            self.question_label.setText("")
+
+    def on_reset_clicked(self) -> None:
+        if self.init_failed:
+            return
+        if self.answers and not self.dialog_finished:
+            reply = QMessageBox.question(
+                self,
+                "Reset dialogu",
+                "Czy na pewno chcesz wyczyścić odpowiedzi i rozpocząć od nowa?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+        self._reset_dialog()
+
     def _fatal(self, message: str) -> None:
         self.init_failed = True
         self.status_label.setText("Błąd inicjalizacji")
         self.question_label.setText(message)
         self.next_button.setEnabled(False)
+        self.reset_button.setEnabled(False)
         self.ranking_list.clear()
         self.ranking_list.addItem("Błąd inicjalizacji")
 

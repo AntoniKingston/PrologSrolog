@@ -6,7 +6,9 @@
     gui_answer_count/1,
     gui_next_q/1,
     gui_best_country/2,
+    gui_wynik_koncowy/2,
     gui_infer_scores/2,
+    gui_hipoteza/2,
     gui_dialog_status/3
 ]).
 
@@ -15,12 +17,19 @@
     active_hypotheses/2,
     unresolved_hypothesis_pairs/2
 ]).
-:- use_module(inference_engine, [best_country/2, infer_scores/2]).
+:- use_module(inference_engine, [
+    best_country/2,
+    clear_hipotezy/0,
+    infer_scores/2,
+    hipoteza/2,
+    wynik_koncowy/2
+]).
 
 :- dynamic gui_answer/2.
 
 gui_reset :-
-    retractall(gui_answer(_, _)).
+    retractall(gui_answer(_, _)),
+    clear_hipotezy().
 
 gui_add(Q, V) :-
     assertz(gui_answer(Q, V)).
@@ -38,13 +47,21 @@ gui_next_q(Qid) :-
     !.
 
 gui_best_country(Country, Score) :-
+    gui_wynik_koncowy(Country, Score).
+
+% Konspekt §4.2: wynik_koncowy/2 — najlepsza hipoteza po bieżących odpowiedziach.
+gui_wynik_koncowy(Country, Score) :-
     gui_answer_list(Answers),
     best_country(Answers, Country-Score).
 
+% Konspekt §4.2: hipoteza/2 — wszystkie kraje z aktualną pewnością (po infer_scores).
 gui_infer_scores(Country, Score) :-
+    gui_hipoteza(Country, Score).
+
+gui_hipoteza(Country, Score) :-
     gui_answer_list(Answers),
-    infer_scores(Answers, Scores),
-    member(Country-Score, Scores).
+    infer_scores(Answers, _),
+    hipoteza(Country, Score).
 
 % Liczba aktywnych hipotez i nierozróżnionych par (do paska statusu GUI).
 gui_dialog_status(NumHypotheses, NumPairs, TopPair) :-

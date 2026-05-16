@@ -98,7 +98,7 @@ def main() -> int:
     print()
 
     rows = list(p.query(f"{m}:gui_best_country(Country, Score)"))
-    print("gui_best_country (jak przycisk „Pokaż wynik”):", rows)
+    print("gui_best_country / gui_wynik_koncowy (konspekt wynik_koncowy/2):", rows)
     if rows:
         c, s = rows[0].get("Country"), rows[0].get("Score")
         print("  Country:", repr(c), "| Score:", repr(s))
@@ -108,6 +108,16 @@ def main() -> int:
                 print("UWAGA: Score=0 — sprawdź inference_engine (premise yes/no vs tak/nie).")
         except (TypeError, ValueError):
             pass
+
+    hip = list(p.query(f"{m}:gui_hipoteza(Country, Score)"))
+    print(f"gui_hipoteza (dynamiczne hipoteza/2): {len(hip)} krajów")
+    wk = list(p.query(f"inference_engine:wynik_koncowy(K, P)"))
+    print("inference_engine:wynik_koncowy/2 po inferencji:", wk)
+    if rows and wk:
+        c0 = str(rows[0].get("Country"))
+        k0 = str(wk[0].get("K"))
+        if c0 != k0:
+            print("UWAGA: gui_best_country i wynik_koncowy/2 różnią się co do kraju.")
     print()
 
     rows = list(p.query(f"{m}:gui_next_q(Qid)", maxresult=1))
