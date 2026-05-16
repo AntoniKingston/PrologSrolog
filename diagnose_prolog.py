@@ -74,9 +74,9 @@ def main() -> int:
             list(p.query(f"assertz(({inner}))"))
 
     retract()
-    fact("q_ruch_lewostronny", "no")
-    fact("q_znak_speed_limit_usa", "yes")
-    fact("q_tablica_dluga_eu", "no")
+    fact("q_strona_ruchu", "prawostronny")
+    fact("q_ksztalt_znaku_ograniczenia", "prostokatny")
+    fact("q_kolor_znaku_ograniczenia", "z_czerwona_obwodka")
 
     rows = list(p.query(f"{m}:gui_answer_count(N)"))
     print("Oczekiwane: 3 fakty gui_answer w Prologu.")

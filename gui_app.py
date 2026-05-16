@@ -45,6 +45,8 @@ class Question:
 _SESSION_MOD = "gui_session"
 _QID_RE = re.compile(r"^q_[a-z0-9_]+$")
 _ATOM_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Dialog kończy się, gdy dowolny kraj ma pewność ściśle większą niż ten próg.
+CONFIDENCE_WIN_THRESHOLD = 0.9
 
 
 def _unwrap_qvariant(raw: Any) -> Any:
@@ -113,6 +115,7 @@ class ExpertSystemGUI(QMainWindow):
         self.questions_by_id: Dict[str, Question] = {}
         self.current_question: Question | None = None
         self.init_failed: bool = False
+        self.dialog_finished: bool = False
         self.base_dir = Path(__file__).resolve().parent
         self._last_prolog_sync_count: int | None = None
 
@@ -287,6 +290,67 @@ class ExpertSystemGUI(QMainWindow):
         pairs.sort(key=lambda item: item[1], reverse=True)
         return pairs
 
+    def _current_ranked_scores(self) -> List[Tuple[str, float]]:
+        if not self.prolog or self.init_failed or not self.answers:
+            return []
+        self._sync_prolog_session_from_answers()
+        try:
+            rows = list(self.prolog.query(f"{_SESSION_MOD}:gui_infer_scores(Country, Score)"))
+        except Exception:
+            return []
+        return self._sort_country_scores(rows)
+
+    def _winner_above_threshold(
+        self, threshold: float = CONFIDENCE_WIN_THRESHOLD
+    ) -> Optional[Tuple[str, float]]:
+        ranked = self._current_ranked_scores()
+        if not ranked:
+            return None
+        country, score = ranked[0]
+        if score > threshold:
+            return country, score
+        return None
+
+    def _finish_dialog_resolved(self, country_atom: str, score: float) -> None:
+        self.dialog_finished = True
+        label = self._country_label(country_atom)
+        self.question_label.setText(
+            f"Rozstrzygnięto: {label} (pewność {score:.3f}). "
+            f"Dialog zakończony — próg to pewność powyżej {CONFIDENCE_WIN_THRESHOLD:.1f}."
+        )
+        self._clear_answer_widgets()
+        self.current_question = None
+        self.next_button.setEnabled(False)
+        self.ranking_title.setText("Wynik końcowy")
+        self._update_status_line()
+        self._refresh_ranking()
+
+    def _finish_dialog_unresolved(self) -> None:
+        self.dialog_finished = True
+        ranked = self._current_ranked_scores()
+        hint = ""
+        if ranked:
+            top_label = self._country_label(ranked[0][0])
+            hint = f" Najwyższa pewność: {top_label} ({ranked[0][1]:.3f})."
+        self.question_label.setText(
+            "Brak rozstrzygnięcia — żaden kraj nie osiągnął pewności powyżej "
+            f"{CONFIDENCE_WIN_THRESHOLD:.1f}. Zadano wszystkie dostępne pytania."
+            f"{hint} Zobacz ranking po prawej."
+        )
+        self._clear_answer_widgets()
+        self.current_question = None
+        self.next_button.setEnabled(False)
+        self._update_status_line()
+        self._refresh_ranking()
+
+    def _try_finish_after_answer(self) -> bool:
+        """Zwraca True, jeśli dialog został zakończony (wygrana lub brak pytań)."""
+        winner = self._winner_above_threshold()
+        if winner is not None:
+            self._finish_dialog_resolved(winner[0], winner[1])
+            return True
+        return False
+
     def _dialog_context_status(self) -> str:
         if not self.prolog or self.init_failed:
             return ""
@@ -402,33 +466,24 @@ class ExpertSystemGUI(QMainWindow):
         return _prolog_text(rows[0]["Qid"])
 
     def _render_next_question(self) -> None:
+        if self.dialog_finished:
+            return
+
         if not self.questions:
             self.question_label.setText("Brak pytań w bazie wiedzy.")
             self.next_button.setEnabled(False)
             return
 
+        if self.answers and self._try_finish_after_answer():
+            return
+
         if len(self.answers) >= len(self.questions):
-            self.question_label.setText(
-                "Wszystkie pytania wypełnione. Ranking po prawej pokazuje aktualne hipotezy."
-            )
-            self._clear_answer_widgets()
-            self.current_question = None
-            self.next_button.setEnabled(False)
-            self._update_status_line()
-            self._refresh_ranking()
+            self._finish_dialog_unresolved()
             return
 
         next_qid = self._next_contextual_qid()
         if next_qid is None:
-            self.question_label.setText(
-                "Brak kolejnego pytania (wszystkie cechy już ocenione lub błąd strategii). "
-                "Aktualny ranking jest widoczny po prawej stronie."
-            )
-            self._clear_answer_widgets()
-            self.current_question = None
-            self.next_button.setEnabled(False)
-            self._update_status_line()
-            self._refresh_ranking()
+            self._finish_dialog_unresolved()
             return
 
         q = self.questions_by_id.get(next_qid)
@@ -477,6 +532,11 @@ class ExpertSystemGUI(QMainWindow):
             self.answer_layout.addWidget(label)
             self.answer_layout.addWidget(slider)
             self.slider = slider
+            rb_unknown = QRadioButton("Nie wiem")
+            rb_unknown.setProperty("value", "unknown")
+            rb_unknown.setProperty("slider_unknown", True)
+            self.radio_group.addButton(rb_unknown)
+            self.answer_layout.addWidget(rb_unknown)
         elif question.input_type == "enum":
             opts = question.enum_values or []
             if not opts:
@@ -492,7 +552,10 @@ class ExpertSystemGUI(QMainWindow):
                     self.answer_layout.addWidget(rb)
                 return
             for atom in opts:
-                label = atom.replace("_", " ")
+                if atom == "nie_wiem":
+                    label = "Nie wiem"
+                else:
+                    label = atom.replace("_", " ")
                 rb = QRadioButton(label)
                 rb.setProperty("value", atom)
                 self.radio_group.addButton(rb)
@@ -511,9 +574,11 @@ class ExpertSystemGUI(QMainWindow):
     def _read_current_answer(self) -> AnswerValue | None:
         if not self.current_question:
             return None
+        checked = self.radio_group.checkedButton()
+        if checked is not None and checked.property("slider_unknown"):
+            return "unknown"
         if self.current_question.input_type == "slider" and self.slider is not None:
             return int(self.slider.value())
-        checked = self.radio_group.checkedButton()
         if checked is None:
             return None
         raw = checked.property("value")
@@ -529,7 +594,7 @@ class ExpertSystemGUI(QMainWindow):
         return _normalize_answer_for_prolog(str(v))
 
     def on_next_clicked(self) -> None:
-        if not self.current_question:
+        if self.dialog_finished or not self.current_question:
             return
         answer = self._read_current_answer()
         if answer is None:
@@ -537,6 +602,9 @@ class ExpertSystemGUI(QMainWindow):
             return
         self.answers[self.current_question.qid] = answer
         self._update_status_line()
+        self._refresh_ranking()
+        if self._try_finish_after_answer():
+            return
         self._render_next_question()
 
     def _country_label(self, country_atom: str) -> str:

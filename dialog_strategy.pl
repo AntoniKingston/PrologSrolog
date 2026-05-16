@@ -288,16 +288,14 @@ exclude_qid([Qid-_ | Rest], Qid, Out) :-
 exclude_qid([H | Rest], Qid, [H | Out]) :-
     exclude_qid(Rest, Qid, Out).
 
-possible_answer_values(radio, _Feature, [yes, no, unknown]).
 possible_answer_values(enum, Feature, Values) :-
     findall(V, enum_wartosc(Feature, V), Vs),
     ( Vs = [] ->
         Values = [unknown]
-    ;
-        append(Vs, [unknown], Values)
+    ; Values = Vs
     ).
-possible_answer_values(slider, _Feature, [0, 50, 100]).
-possible_answer_values(_Other, _Feature, [yes, no, unknown]).
+possible_answer_values(slider, _Feature, [0, 50, 100, unknown]).
+possible_answer_values(_Other, _Feature, [unknown]).
 
 % Szybki fallback: różnica oczekiwań z reguł CF dla cechy (gdy symulacja nie rozdziela).
 rule_based_pair_separation(C1, C2, Feature, Separation) :-

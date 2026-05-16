@@ -226,6 +226,8 @@ bool_answer_certainty(Feature, Answers, WantYes, Cert) :-
 enum_answer_certainty(Feature, Answers, Expected, Cert) :-
     ( answer_for_feature(Feature, Answers, unknown) ->
         unknown_premise_certainty(Cert)
+    ; answer_for_feature(Feature, Answers, nie_wiem) ->
+        unknown_premise_certainty(Cert)
     ; answer_for_feature(Feature, Answers, Expected) ->
         Cert = 1.0
     ; answer_for_feature(Feature, Answers, _) ->
@@ -440,14 +442,28 @@ sharpen_score(X, Y) :-
 veto_penalty(Country, Answers, Penalty) :-
     findall(
         P,
-        (weto(Country, Premise, Threshold),
-         premise_conflict_strength(Premise, Answers, Strength),
-         Strength >= Threshold,
-         P = 0.5),
+        ( ( weto(Country, Premise, Threshold),
+            premise_conflict_strength(Premise, Answers, Strength),
+            Strength >= Threshold,
+            P = 0.5
+          )
+        ; ( weto_zakaz(Country, Feature, Forbidden, Threshold),
+            zakaz_conflict_strength(Feature, Forbidden, Answers, Strength),
+            Strength >= Threshold,
+            P = 0.5
+          )
+        ),
         Penalties
     ),
     sum_list(Penalties, Raw),
     clamp_01(Raw, Penalty).
+
+zakaz_conflict_strength(Feature, Forbidden, Answers, Strength) :-
+    ( answer_for_feature(Feature, Answers, unknown) -> Strength = 0.0
+    ; answer_for_feature(Feature, Answers, nie_wiem) -> Strength = 0.0
+    ; answer_for_feature(Feature, Answers, Forbidden) -> Strength = 1.0
+    ; Strength = 0.0
+    ).
 
 rule_blocked_by_veto(Country, Answers, RuleId) :-
     regula_cf(RuleId, Country, _Premises, _Weight, _Priority),
